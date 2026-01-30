@@ -1,0 +1,4 @@
+- Logs keystrokes and sends to discord webhook
+- runs in background
+- adds itself to startup
+- on program start victim info is sent to webhook

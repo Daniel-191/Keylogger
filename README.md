@@ -2,9 +2,9 @@
 ***  
 # Features 
  - [x] Add itself to startup
- - [ ] Sends PC information to webhook on run
- - [ ] Stays completely hidden
- - [ ] Logs keystrokes and sends them to the webhook
+ - [x] Sends PC information to webhook on run
+ - [x] Stays completely hidden
+ - [x] Logs keystrokes and sends them to the webhook
 
 ## Soon
 

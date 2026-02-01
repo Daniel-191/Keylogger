@@ -30,6 +30,11 @@
 
 ---
 
+## VirusTotal Report (as of 01/02/26)
+<img width="1947" height="265" alt="image" src="https://github.com/user-attachments/assets/fa1dcbfd-48f3-4f4c-932f-2f49e82cb5ff" />
+
+---
+
 ## Installation
 
 ### Step 1: Clone the Repository

@@ -24,7 +24,6 @@
 ### Soon
 - [ ] Smart keylogging
 - [ ] Hidden on task manager
-- [ ] include virus total review
 - [ ] Reports via email
 - [ ] Mouse,Screenshot,Microphone 
 

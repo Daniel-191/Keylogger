@@ -6,7 +6,7 @@
 [![C#](https://img.shields.io/badge/C%23-239120?style=for-the-badge&logo=c-sharp&logoColor=white)](https://docs.microsoft.com/en-us/dotnet/csharp/)
 [![License](https://img.shields.io/badge/License-Educational-red?style=for-the-badge)](LICENSE)
 
-**A C# keylogger implementation for educational and security research purposes**
+**A Windows keylogger written in C#**
 
 [Features](#features) • [Installation](#installation) • [Soon](#soon) • [Disclaimer](#disclaimer)
 
@@ -24,6 +24,9 @@
 ### Soon
 - [ ] Smart keylogging
 - [ ] Hidden on task manager
+- [ ] include virus total review
+- [ ] Reports via email
+- [ ] Mouse,Screenshot,Microphone 
 
 ---
 

